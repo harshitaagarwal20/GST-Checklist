@@ -24,7 +24,8 @@ body {
 .app-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -35,6 +36,8 @@ body {
   flex-direction: column;
   gap: 16px;
   border-right: 1px solid rgba(255, 255, 255, 0.16);
+  height: 100vh;
+  overflow: hidden;
 }
 
 .brand-block h1 {
@@ -137,6 +140,7 @@ body {
 
 .main-content {
   padding: 24px;
+  height: 100vh;
   overflow-y: auto;
 }
 
@@ -220,6 +224,55 @@ body {
   box-shadow: 0 8px 20px rgba(15, 41, 77, 0.08);
 }
 
+.section-nav-card {
+  margin-top: 14px;
+  background: #ffffff;
+  border: 1px solid #c7d7ef;
+  border-radius: 16px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 180px;
+  gap: 12px;
+  align-items: center;
+}
+
+.section-nav-center {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-nav-center label {
+  font-size: 0.8rem;
+  color: #395780;
+  font-weight: 700;
+}
+
+.section-select {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #bacbe6;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  background: #f9fbff;
+  color: #1c2d4a;
+}
+
+.section-nav-btn {
+  border: 1px solid #adc3e6;
+  background: #edf3ff;
+  color: #143660;
+  border-radius: 10px;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.section-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -286,11 +339,15 @@ body {
 @media (max-width: 1080px) {
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    height: auto;
+    overflow: visible;
   }
 
   .download-btn {
@@ -304,11 +361,16 @@ body {
   .checklist-row {
     grid-template-columns: 1fr;
   }
+
+  .section-nav-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
   .main-content {
     padding: 14px;
+    height: auto;
   }
 
   .metrics-grid {

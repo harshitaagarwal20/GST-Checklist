@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const STATUS_OPTIONS = ["Yes", "No", "NA"];
 
@@ -21,6 +21,7 @@ function App() {
   const [rows, setRows] = useState([]);
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState([...STATUS_OPTIONS]);
+  const [activeSectionIndex, setActiveSectionIndex] = useState(0);
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -49,13 +50,27 @@ function App() {
   const groupedRows = useMemo(() => {
     const groups = new Map();
     for (const row of filteredRows) {
-      if (!groups.has(row.heading)) {
-        groups.set(row.heading, []);
+      const sectionName = row.heading || "Uncategorized Section";
+      if (!groups.has(sectionName)) {
+        groups.set(sectionName, []);
       }
-      groups.get(row.heading).push(row);
+      groups.get(sectionName).push(row);
     }
     return Array.from(groups.entries());
   }, [filteredRows]);
+
+  const activeSection = groupedRows[activeSectionIndex] || null;
+
+  useEffect(() => {
+    if (!groupedRows.length) {
+      setActiveSectionIndex(0);
+      return;
+    }
+
+    if (activeSectionIndex >= groupedRows.length) {
+      setActiveSectionIndex(0);
+    }
+  }, [groupedRows, activeSectionIndex]);
 
   async function handleUpload(file) {
     if (!file) {
@@ -81,10 +96,12 @@ function App() {
 
       setRows(data.rows || []);
       setFileName(data.fileName || file.name);
+      setActiveSectionIndex(0);
       setUploadHint("Workbook loaded. You can now review and update statuses.");
     } catch (uploadError) {
       setError(uploadError.message || "Something went wrong while uploading.");
       setRows([]);
+      setActiveSectionIndex(0);
       setFileName("");
     } finally {
       setLoading(false);
@@ -246,48 +263,95 @@ function App() {
           </section>
         )}
 
-        {groupedRows.map(([heading, headingRows]) => (
-          <section key={heading} className="section-card">
-            <div className="section-head">
-              <h4>{heading || "Uncategorized Section"}</h4>
-              <span>{headingRows.length} items</span>
-            </div>
+        {!!activeSection && (
+          <>
+            <section className="section-nav-card">
+              <button
+                type="button"
+                className="section-nav-btn"
+                onClick={() => setActiveSectionIndex((index) => Math.max(index - 1, 0))}
+                disabled={activeSectionIndex === 0}
+              >
+                Previous Section
+              </button>
 
-            {headingRows.map((row) => (
-              <div className="checklist-row" key={row.id}>
-                <div className="item-block">
-                  <p className="item-text">{row.item}</p>
-                  <span className={`status-badge ${row.status.toLowerCase()}`}>
-                    {row.status}
-                  </span>
-                </div>
-
+              <div className="section-nav-center">
+                <label htmlFor="sectionSelect">Current Section</label>
                 <select
-                  className="status-select"
-                  value={row.status}
+                  id="sectionSelect"
+                  className="section-select"
+                  value={activeSectionIndex}
                   onChange={(event) =>
-                    updateRow(row.id, "status", event.target.value)
+                    setActiveSectionIndex(Number(event.target.value))
                   }
                 >
-                  {STATUS_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
+                  {groupedRows.map(([heading], index) => (
+                    <option key={heading} value={index}>
+                      {index + 1}. {heading}
                     </option>
                   ))}
                 </select>
-
-                <input
-                  className="comment-input"
-                  value={row.comments}
-                  onChange={(event) =>
-                    updateRow(row.id, "comments", event.target.value)
-                  }
-                  placeholder="Add comments..."
-                />
               </div>
-            ))}
-          </section>
-        ))}
+
+              <button
+                type="button"
+                className="section-nav-btn"
+                onClick={() =>
+                  setActiveSectionIndex((index) =>
+                    Math.min(index + 1, groupedRows.length - 1)
+                  )
+                }
+                disabled={activeSectionIndex === groupedRows.length - 1}
+              >
+                Next Section
+              </button>
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <h4>{activeSection[0]}</h4>
+                <span>
+                  Section {activeSectionIndex + 1} of {groupedRows.length} |{" "}
+                  {activeSection[1].length} items
+                </span>
+              </div>
+
+              {activeSection[1].map((row) => (
+                <div className="checklist-row" key={row.id}>
+                  <div className="item-block">
+                    <p className="item-text">{row.item}</p>
+                    <span className={`status-badge ${row.status.toLowerCase()}`}>
+                      {row.status}
+                    </span>
+                  </div>
+
+                  <select
+                    className="status-select"
+                    value={row.status}
+                    onChange={(event) =>
+                      updateRow(row.id, "status", event.target.value)
+                    }
+                  >
+                    {STATUS_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    className="comment-input"
+                    value={row.comments}
+                    onChange={(event) =>
+                      updateRow(row.id, "comments", event.target.value)
+                    }
+                    placeholder="Add comments..."
+                  />
+                </div>
+              ))}
+            </section>
+          </>
+        )}
       </main>
     </div>
   );
