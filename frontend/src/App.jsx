@@ -1,13 +1,56 @@
 import { useEffect, useMemo, useState } from "react";
 
 const STATUS_OPTIONS = ["Yes", "No", "NA"];
+const DEFAULT_STATUS = "NA";
+const DEFAULT_UPLOAD_HINT =
+  "Upload your checklist workbook to begin GST audit review.";
+const DEFAULT_FIRM_NAME = "Firm 1";
+
+function buildFreshRowsFromTemplate(templateRows) {
+  return templateRows.map((row, index) => ({
+    ...row,
+    id: index + 1,
+    status: DEFAULT_STATUS,
+    comments: ""
+  }));
+}
 
 function buildSummary(rows) {
   const total = rows.length;
   const yes = rows.filter((row) => row.status === "Yes").length;
   const no = rows.filter((row) => row.status === "No").length;
   const na = rows.filter((row) => row.status === "NA").length;
-  return { total, yes, no, na };
+  const reviewed = yes + no;
+  return { total, yes, no, na, reviewed };
+}
+
+function buildSectionStats(rows) {
+  const sectionMap = new Map();
+
+  for (const row of rows) {
+    const sectionName = row.heading || "Uncategorized Section";
+    if (!sectionMap.has(sectionName)) {
+      sectionMap.set(sectionName, {
+        name: sectionName,
+        total: 0,
+        yes: 0,
+        no: 0,
+        na: 0
+      });
+    }
+    const section = sectionMap.get(sectionName);
+    section.total += 1;
+    if (row.status === "Yes") section.yes += 1;
+    else if (row.status === "No") section.no += 1;
+    else section.na += 1;
+  }
+
+  return Array.from(sectionMap.values())
+    .map((section) => ({
+      ...section,
+      reviewed: section.yes + section.no
+    }))
+    .sort((a, b) => b.total - a.total);
 }
 
 function formatPercent(value, total) {
@@ -17,19 +60,70 @@ function formatPercent(value, total) {
   return `${Math.round((value / total) * 100)}%`;
 }
 
+async function parseJsonSafely(response) {
+  try {
+    return await response.json();
+  } catch (_error) {
+    return null;
+  }
+}
+
 function App() {
-  const [rows, setRows] = useState([]);
+  const [firms, setFirms] = useState([
+    {
+      id: "firm-1",
+      name: DEFAULT_FIRM_NAME,
+      rows: [],
+      fileName: "",
+      uploadHint: DEFAULT_UPLOAD_HINT
+    }
+  ]);
+  const [activeFirmId, setActiveFirmId] = useState("firm-1");
+  const [showAddFirmModal, setShowAddFirmModal] = useState(false);
+  const [modalFirmName, setModalFirmName] = useState("");
+  const [templateRows, setTemplateRows] = useState([]);
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState([...STATUS_OPTIONS]);
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
-  const [fileName, setFileName] = useState("");
+  const [activePage, setActivePage] = useState("review");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [uploadHint, setUploadHint] = useState(
-    "Upload your checklist workbook to begin GST audit review."
+  const activeFirm = useMemo(
+    () => firms.find((firm) => firm.id === activeFirmId) || firms[0],
+    [firms, activeFirmId]
   );
+  const rows = activeFirm?.rows || [];
+  const fileName = activeFirm?.fileName || "";
+  const uploadHint = activeFirm?.uploadHint || DEFAULT_UPLOAD_HINT;
 
   const summary = useMemo(() => buildSummary(rows), [rows]);
+  const sectionStats = useMemo(() => buildSectionStats(rows), [rows]);
+  const sectionsWithFindings = useMemo(
+    () => sectionStats.filter((section) => section.no > 0).length,
+    [sectionStats]
+  );
+  const topFindingSection = useMemo(() => {
+    if (!sectionStats.length) {
+      return null;
+    }
+    return [...sectionStats].sort((a, b) => b.no - a.no)[0];
+  }, [sectionStats]);
+  const chartSections = useMemo(() => sectionStats.slice(0, 8), [sectionStats]);
+  const donutStyle = useMemo(() => {
+    if (!summary.total) {
+      return { background: "conic-gradient(#d7e3f6 0 100%)" };
+    }
+    const yesP = (summary.yes / summary.total) * 100;
+    const noP = (summary.no / summary.total) * 100;
+    const naP = Math.max(0, 100 - yesP - noP);
+    return {
+      background: `conic-gradient(
+        #2e9d5d 0 ${yesP}%,
+        #c8423d ${yesP}% ${yesP + noP}%,
+        #7a8598 ${yesP + noP}% ${yesP + noP + naP}%
+      )`
+    };
+  }, [summary]);
 
   const filteredRows = useMemo(() => {
     let result = [...rows];
@@ -72,6 +166,94 @@ function App() {
     }
   }, [groupedRows, activeSectionIndex]);
 
+  function updateActiveFirm(patch) {
+    setFirms((current) =>
+      current.map((firm) =>
+        firm.id === activeFirmId
+          ? {
+              ...firm,
+              ...patch
+            }
+          : firm
+      )
+    );
+  }
+
+  function addFirm(nameOverride) {
+    const trimmedName = String(nameOverride || "").trim();
+    const nextIndex = firms.length + 1;
+    const id = `firm-${Date.now()}`;
+    const name = trimmedName || `Firm ${nextIndex}`;
+    const rowsForFirm = templateRows.length ? buildFreshRowsFromTemplate(templateRows) : [];
+
+    setFirms((current) => [
+      ...current,
+      {
+        id,
+        name,
+        rows: rowsForFirm,
+        fileName: fileName || "",
+        uploadHint: templateRows.length
+          ? "Checklist template applied. You can start filling this firm now."
+          : DEFAULT_UPLOAD_HINT
+      }
+    ]);
+    setActiveFirmId(id);
+    setModalFirmName("");
+    setShowAddFirmModal(false);
+    setActiveSectionIndex(0);
+    setSearchText("");
+    setStatusFilter([...STATUS_OPTIONS]);
+  }
+
+  function duplicateActiveFirm() {
+    if (!activeFirm) {
+      return;
+    }
+    const nextIndex = firms.length + 1;
+    const id = `firm-${Date.now()}`;
+    const duplicateRows = rows.map((row, index) => ({
+      ...row,
+      id: index + 1
+    }));
+    const duplicateName = `${activeFirm.name || `Firm ${nextIndex}`} Copy`;
+
+    setFirms((current) => [
+      ...current,
+      {
+        id,
+        name: duplicateName,
+        rows: duplicateRows,
+        fileName: activeFirm.fileName || "",
+        uploadHint: `Duplicated from ${activeFirm.name || DEFAULT_FIRM_NAME}.`
+      }
+    ]);
+    setActiveFirmId(id);
+    setActiveSectionIndex(0);
+    setSearchText("");
+    setStatusFilter([...STATUS_OPTIONS]);
+  }
+
+  function deleteActiveFirm() {
+    if (firms.length <= 1) {
+      setError("At least one firm is required. You cannot delete the last firm.");
+      return;
+    }
+    let nextActiveId = activeFirmId;
+    setFirms((current) => {
+      const currentIndex = current.findIndex((firm) => firm.id === activeFirmId);
+      const nextFirms = current.filter((firm) => firm.id !== activeFirmId);
+      const fallbackFirm = nextFirms[Math.max(0, currentIndex - 1)] || nextFirms[0];
+      nextActiveId = fallbackFirm?.id || "";
+      return nextFirms;
+    });
+    setActiveFirmId(nextActiveId);
+    setError("");
+    setActiveSectionIndex(0);
+    setSearchText("");
+    setStatusFilter([...STATUS_OPTIONS]);
+  }
+
   async function handleUpload(file) {
     if (!file) {
       return;
@@ -88,29 +270,69 @@ function App() {
         method: "POST",
         body: formData
       });
-      const data = await response.json();
+      const data = await parseJsonSafely(response);
 
       if (!response.ok) {
-        throw new Error(data.error || "Upload failed.");
+        throw new Error(data?.error || "Upload failed.");
       }
 
-      setRows(data.rows || []);
-      setFileName(data.fileName || file.name);
+      const uploadedRows = data?.rows || [];
+      setTemplateRows(uploadedRows);
+      updateActiveFirm({
+        rows: uploadedRows,
+        fileName: data?.fileName || file.name,
+        uploadHint: "Workbook loaded. You can now review and update statuses."
+      });
       setActiveSectionIndex(0);
-      setUploadHint("Workbook loaded. You can now review and update statuses.");
     } catch (uploadError) {
       setError(uploadError.message || "Something went wrong while uploading.");
-      setRows([]);
+      updateActiveFirm({
+        rows: [],
+        fileName: "",
+        uploadHint: DEFAULT_UPLOAD_HINT
+      });
       setActiveSectionIndex(0);
-      setFileName("");
     } finally {
       setLoading(false);
     }
   }
 
   function updateRow(id, field, value) {
-    setRows((current) =>
-      current.map((row) => (row.id === id ? { ...row, [field]: value } : row))
+    updateActiveFirm({
+      rows: rows.map((row) => (row.id === id ? { ...row, [field]: value } : row))
+    });
+  }
+
+  function updateFirmName(value) {
+    updateActiveFirm({
+      name: value
+    });
+  }
+
+  function selectFirm(id) {
+    setActiveFirmId(id);
+    setActiveSectionIndex(0);
+    setSearchText("");
+    setStatusFilter([...STATUS_OPTIONS]);
+  }
+
+  function syncTemplateToOtherFirms() {
+    if (!templateRows.length) {
+      setError("Upload one checklist first to sync template across firms.");
+      return;
+    }
+    setError("");
+    setFirms((current) =>
+      current.map((firm) => {
+        if (firm.id === activeFirmId) {
+          return firm;
+        }
+        return {
+          ...firm,
+          rows: buildFreshRowsFromTemplate(templateRows),
+          uploadHint: "Checklist template synced. Start filling this firm."
+        };
+      })
     );
   }
 
@@ -132,19 +354,26 @@ function App() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ rows })
+        body: JSON.stringify({
+          rows,
+          firmName: activeFirm?.name || DEFAULT_FIRM_NAME
+        })
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Download failed.");
+        const errData = await parseJsonSafely(response);
+        throw new Error(errData?.error || "Download failed.");
       }
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = "gst_audit_checklist_updated.xlsx";
+      const safeFirmName = (activeFirm?.name || "firm")
+        .replace(/[^a-zA-Z0-9_-]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .toLowerCase();
+      link.download = `gst_audit_checklist_${safeFirmName || "firm"}_updated.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -154,12 +383,44 @@ function App() {
     }
   }
 
+  function printDashboard() {
+    if (!rows.length) {
+      setError("Please upload checklist data before printing the dashboard.");
+      return;
+    }
+    setError("");
+    setActivePage("dashboard");
+    setTimeout(() => {
+      window.print();
+    }, 120);
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-block">
           <h1>GST Audit Checklist</h1>
           <p>Professional compliance review workspace</p>
+        </div>
+
+        <div className="panel">
+          <p className="label">Workspace Page</p>
+          <div className="view-switch">
+            <button
+              type="button"
+              className={activePage === "review" ? "view-btn active" : "view-btn"}
+              onClick={() => setActivePage("review")}
+            >
+              Form Filling
+            </button>
+            <button
+              type="button"
+              className={activePage === "dashboard" ? "view-btn active" : "view-btn"}
+              onClick={() => setActivePage("dashboard")}
+            >
+              Dashboard
+            </button>
+          </div>
         </div>
 
         <div className="panel">
@@ -173,19 +434,6 @@ function App() {
           />
           <p className="muted">{loading ? "Uploading..." : uploadHint}</p>
           {fileName && <p className="file-name">Current file: {fileName}</p>}
-        </div>
-
-        <div className="panel">
-          <label className="label" htmlFor="search">
-            Search checklist items
-          </label>
-          <input
-            id="search"
-            className="input-text"
-            placeholder="Type keyword or phrase..."
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-          />
         </div>
 
         <div className="panel">
@@ -216,40 +464,82 @@ function App() {
         >
           Download Updated Checklist
         </button>
+        <button
+          type="button"
+          className="download-btn print-btn"
+          onClick={printDashboard}
+          disabled={!rows.length}
+        >
+          Print Dashboard
+        </button>
       </aside>
 
       <main className="main-content">
+        <section className="firm-toolbar-card">
+          <div className="firm-toolbar-head">
+            <h3>Selected Firm</h3>
+            <span>{firms.length} firm(s)</span>
+          </div>
+          <div className="firm-toolbar-grid">
+            <select
+              className="input-text"
+              value={activeFirmId}
+              onChange={(event) => selectFirm(event.target.value)}
+            >
+              {firms.map((firm) => (
+                <option key={firm.id} value={firm.id}>
+                  {firm.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="input-text"
+              placeholder="Rename selected firm..."
+              value={activeFirm?.name || ""}
+              onChange={(event) => updateFirmName(event.target.value)}
+            />
+            <div className="firm-actions">
+              <button
+                type="button"
+                className="section-nav-btn"
+                onClick={() => {
+                  setModalFirmName("");
+                  setShowAddFirmModal(true);
+                }}
+              >
+                Add Firm
+              </button>
+              <button type="button" className="section-nav-btn" onClick={duplicateActiveFirm}>
+                Duplicate Firm
+              </button>
+              <button type="button" className="section-nav-btn danger-btn" onClick={deleteActiveFirm}>
+                Delete Firm
+              </button>
+            </div>
+            <button
+              type="button"
+              className="section-nav-btn sync-btn"
+              onClick={syncTemplateToOtherFirms}
+              disabled={!templateRows.length || firms.length < 2}
+            >
+              Sync Checklist To All Firms
+            </button>
+          </div>
+        </section>
+
         <div className="top-banner">
           <div>
             <p className="eyebrow">AO MITTAL & ASSOCIATES LLP</p>
-            <h2>GST Compliance Review Desk</h2>
-            <p>Review by section, capture remarks, and finalize workbook output.</p>
+            <h2>
+              {activePage === "review"
+                ? "GST Compliance Review Desk"
+                : "GST Audit Dashboard"}
+            </h2>
+            <p className="active-firm-text">Active firm: {activeFirm?.name || DEFAULT_FIRM_NAME}</p>
           </div>
         </div>
 
         {error && <div className="alert">{error}</div>}
-
-        <section className="metrics-grid">
-          <article className="metric-card">
-            <p>Total Items</p>
-            <h3>{summary.total}</h3>
-          </article>
-          <article className="metric-card">
-            <p>Yes</p>
-            <h3>{summary.yes}</h3>
-            <span>{formatPercent(summary.yes, summary.total)}</span>
-          </article>
-          <article className="metric-card">
-            <p>No</p>
-            <h3>{summary.no}</h3>
-            <span>{formatPercent(summary.no, summary.total)}</span>
-          </article>
-          <article className="metric-card">
-            <p>NA</p>
-            <h3>{summary.na}</h3>
-            <span>{formatPercent(summary.na, summary.total)}</span>
-          </article>
-        </section>
 
         {!rows.length && !error && (
           <section className="empty-state">
@@ -257,102 +547,243 @@ function App() {
           </section>
         )}
 
-        {!!rows.length && !filteredRows.length && (
-          <section className="empty-state">
-            No rows match the current search or status filters.
-          </section>
-        )}
-
-        {!!activeSection && (
+        {!!rows.length && activePage === "dashboard" && (
           <>
-            <section className="section-nav-card">
-              <button
-                type="button"
-                className="section-nav-btn"
-                onClick={() => setActiveSectionIndex((index) => Math.max(index - 1, 0))}
-                disabled={activeSectionIndex === 0}
-              >
-                Previous Section
-              </button>
-
-              <div className="section-nav-center">
-                <label htmlFor="sectionSelect">Current Section</label>
-                <select
-                  id="sectionSelect"
-                  className="section-select"
-                  value={activeSectionIndex}
-                  onChange={(event) =>
-                    setActiveSectionIndex(Number(event.target.value))
-                  }
-                >
-                  {groupedRows.map(([heading], index) => (
-                    <option key={heading} value={index}>
-                      {index + 1}. {heading}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                type="button"
-                className="section-nav-btn"
-                onClick={() =>
-                  setActiveSectionIndex((index) =>
-                    Math.min(index + 1, groupedRows.length - 1)
-                  )
-                }
-                disabled={activeSectionIndex === groupedRows.length - 1}
-              >
-                Next Section
-              </button>
+            <section className="metrics-grid">
+              <article className="metric-card">
+                <p>Total Items</p>
+                <h3>{summary.total}</h3>
+              </article>
+              <article className="metric-card">
+                <p>Yes</p>
+                <h3>{summary.yes}</h3>
+                <span>{formatPercent(summary.yes, summary.total)}</span>
+              </article>
+              <article className="metric-card">
+                <p>No</p>
+                <h3>{summary.no}</h3>
+                <span>{formatPercent(summary.no, summary.total)}</span>
+              </article>
+              <article className="metric-card">
+                <p>NA</p>
+                <h3>{summary.na}</h3>
+                <span>{formatPercent(summary.na, summary.total)}</span>
+              </article>
             </section>
 
-            <section className="section-card">
-              <div className="section-head">
-                <h4>{activeSection[0]}</h4>
-                <span>
-                  Section {activeSectionIndex + 1} of {groupedRows.length} |{" "}
-                  {activeSection[1].length} items
-                </span>
-              </div>
-
-              {activeSection[1].map((row) => (
-                <div className="checklist-row" key={row.id}>
-                  <div className="item-block">
-                    <p className="item-text">{row.item}</p>
-                    <span className={`status-badge ${row.status.toLowerCase()}`}>
-                      {row.status}
-                    </span>
+            <section className="chart-grid">
+              <article className="chart-card">
+                <div className="chart-head">
+                  <h4>Status Distribution</h4>
+                  <span>{sectionStats.length} sections</span>
+                </div>
+                <div className="donut-wrap">
+                  <div className="donut-chart" style={donutStyle}>
+                    <div className="donut-hole">
+                      <strong>{formatPercent(summary.reviewed, summary.total)}</strong>
+                      <span>Reviewed</span>
+                    </div>
                   </div>
+                  <div className="donut-legend">
+                    <p><i className="dot yes" />Yes: {summary.yes}</p>
+                    <p><i className="dot no" />No: {summary.no}</p>
+                    <p><i className="dot na" />NA: {summary.na}</p>
+                  </div>
+                </div>
+              </article>
 
-                  <select
-                    className="status-select"
-                    value={row.status}
-                    onChange={(event) =>
-                      updateRow(row.id, "status", event.target.value)
-                    }
-                  >
-                    {STATUS_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    className="comment-input"
-                    value={row.comments}
-                    onChange={(event) =>
-                      updateRow(row.id, "comments", event.target.value)
-                    }
-                    placeholder="Add comments..."
+              <article className="chart-card">
+                <div className="chart-head">
+                  <h4>Risk Overview</h4>
+                  <span>{sectionsWithFindings} section(s) with findings</span>
+                </div>
+                <p className="dashboard-note">
+                  Highest finding concentration:{" "}
+                  <strong>
+                    {topFindingSection?.name || "N/A"}{" "}
+                    {topFindingSection ? `(${topFindingSection.no} no)` : ""}
+                  </strong>
+                </p>
+                <div className="progress-track large">
+                  <div
+                    className="progress-fill risk"
+                    style={{ width: formatPercent(summary.no, summary.total) }}
                   />
                 </div>
-              ))}
+                <p className="dashboard-note">
+                  {formatPercent(summary.no, summary.total)} of checklist items are marked as No.
+                </p>
+              </article>
+            </section>
+
+            <section className="section-insights">
+              <div className="section-insights-head">
+                <h4>Section Completion Chart</h4>
+                <span>Top {chartSections.length} by size</span>
+              </div>
+              <div className="section-bars">
+                {chartSections.map((section) => (
+                  <div className="section-bar-row" key={section.name}>
+                    <div className="section-bar-title">
+                      <p>{section.name}</p>
+                      <span>
+                        {section.reviewed}/{section.total} reviewed | {section.no} no
+                      </span>
+                    </div>
+                    <div className="section-track">
+                      <div
+                        className="section-fill reviewed"
+                        style={{ width: formatPercent(section.reviewed, section.total) }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           </>
         )}
+
+        {!!rows.length && activePage === "review" && (
+          <>
+            {!!rows.length && !filteredRows.length && (
+              <section className="empty-state">
+                No rows match the current search or status filters.
+              </section>
+            )}
+
+            {!!activeSection && (
+              <>
+                <section className="section-nav-card">
+                  <button
+                    type="button"
+                    className="section-nav-btn"
+                    onClick={() => setActiveSectionIndex((index) => Math.max(index - 1, 0))}
+                    disabled={activeSectionIndex === 0}
+                  >
+                    Previous Section
+                  </button>
+
+                  <div className="section-nav-center">
+                    <label htmlFor="sectionSelect">Current Section</label>
+                    <select
+                      id="sectionSelect"
+                      className="section-select"
+                      value={activeSectionIndex}
+                      onChange={(event) =>
+                        setActiveSectionIndex(Number(event.target.value))
+                      }
+                    >
+                      {groupedRows.map(([heading], index) => (
+                        <option key={heading} value={index}>
+                          {index + 1}. {heading}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="section-nav-btn"
+                    onClick={() =>
+                      setActiveSectionIndex((index) =>
+                        Math.min(index + 1, groupedRows.length - 1)
+                      )
+                    }
+                    disabled={activeSectionIndex === groupedRows.length - 1}
+                  >
+                    Next Section
+                  </button>
+                </section>
+
+                <section className="section-card">
+                  <div className="section-head">
+                    <h4>{activeSection[0]}</h4>
+                    <span>
+                      Section {activeSectionIndex + 1} of {groupedRows.length} |{" "}
+                      {activeSection[1].length} items
+                    </span>
+                  </div>
+
+                  {activeSection[1].map((row) => (
+                    <div className="checklist-row" key={row.id}>
+                      <div className="item-block">
+                        <p className="item-text">{row.item}</p>
+                        <span className={`status-badge ${row.status.toLowerCase()}`}>
+                          {row.status}
+                        </span>
+                      </div>
+
+                      <select
+                        className="status-select"
+                        value={row.status}
+                        onChange={(event) =>
+                          updateRow(row.id, "status", event.target.value)
+                        }
+                      >
+                        {STATUS_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+
+                      <input
+                        className="comment-input"
+                        value={row.comments}
+                        onChange={(event) =>
+                          updateRow(row.id, "comments", event.target.value)
+                        }
+                        placeholder="Add comments..."
+                      />
+                    </div>
+                  ))}
+                </section>
+              </>
+            )}
+          </>
+        )}
       </main>
+
+      {showAddFirmModal && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setShowAddFirmModal(false);
+            setModalFirmName("");
+          }}
+        >
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <h3>Add New Firm</h3>
+            <p>Create another firm profile for independent checklist filling.</p>
+            <input
+              className="input-text modal-input"
+              placeholder={`Firm ${firms.length + 1}`}
+              value={modalFirmName}
+              onChange={(event) => setModalFirmName(event.target.value)}
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="section-nav-btn"
+                onClick={() => {
+                  setShowAddFirmModal(false);
+                  setModalFirmName("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="section-nav-btn"
+                onClick={() => addFirm(modalFirmName)}
+              >
+                Create Firm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
