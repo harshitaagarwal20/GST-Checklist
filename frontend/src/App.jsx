@@ -298,8 +298,9 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-block">
-          <h1>GST Audit Checklist</h1>
-          <p>Professional compliance review workspace</p>
+          <p className="eyebrow">AO MITTAL & ASSOCIATES LLP</p>
+          <h1>GST Compliance Review Desk</h1>
+          <p className="navbar-active-firm">Active firm: {activeFirm?.name || DEFAULT_FIRM_NAME}</p>
         </div>
 
         <div className="panel">
@@ -397,16 +398,6 @@ function App() {
             </button>
           </div>
         </section>
-
-        <div className="top-banner">
-          <div>
-            <p className="eyebrow">AO MITTAL & ASSOCIATES LLP</p>
-            <h2>
-              GST Compliance Review Desk
-            </h2>
-            <p className="active-firm-text">Active firm: {activeFirm?.name || DEFAULT_FIRM_NAME}</p>
-          </div>
-        </div>
 
         {error && <div className="alert">{error}</div>}
 
