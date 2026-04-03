@@ -15,51 +15,6 @@ function buildFreshRowsFromTemplate(templateRows) {
   }));
 }
 
-function buildSummary(rows) {
-  const total = rows.length;
-  const yes = rows.filter((row) => row.status === "Yes").length;
-  const no = rows.filter((row) => row.status === "No").length;
-  const na = rows.filter((row) => row.status === "NA").length;
-  const reviewed = yes + no;
-  return { total, yes, no, na, reviewed };
-}
-
-function buildSectionStats(rows) {
-  const sectionMap = new Map();
-
-  for (const row of rows) {
-    const sectionName = row.heading || "Uncategorized Section";
-    if (!sectionMap.has(sectionName)) {
-      sectionMap.set(sectionName, {
-        name: sectionName,
-        total: 0,
-        yes: 0,
-        no: 0,
-        na: 0
-      });
-    }
-    const section = sectionMap.get(sectionName);
-    section.total += 1;
-    if (row.status === "Yes") section.yes += 1;
-    else if (row.status === "No") section.no += 1;
-    else section.na += 1;
-  }
-
-  return Array.from(sectionMap.values())
-    .map((section) => ({
-      ...section,
-      reviewed: section.yes + section.no
-    }))
-    .sort((a, b) => b.total - a.total);
-}
-
-function formatPercent(value, total) {
-  if (!total) {
-    return "0%";
-  }
-  return `${Math.round((value / total) * 100)}%`;
-}
-
 async function parseJsonSafely(response) {
   try {
     return await response.json();
@@ -82,10 +37,8 @@ function App() {
   const [showAddFirmModal, setShowAddFirmModal] = useState(false);
   const [modalFirmName, setModalFirmName] = useState("");
   const [templateRows, setTemplateRows] = useState([]);
-  const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState([...STATUS_OPTIONS]);
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
-  const [activePage, setActivePage] = useState("review");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const activeFirm = useMemo(
@@ -96,50 +49,12 @@ function App() {
   const fileName = activeFirm?.fileName || "";
   const uploadHint = activeFirm?.uploadHint || DEFAULT_UPLOAD_HINT;
 
-  const summary = useMemo(() => buildSummary(rows), [rows]);
-  const sectionStats = useMemo(() => buildSectionStats(rows), [rows]);
-  const sectionsWithFindings = useMemo(
-    () => sectionStats.filter((section) => section.no > 0).length,
-    [sectionStats]
-  );
-  const topFindingSection = useMemo(() => {
-    if (!sectionStats.length) {
-      return null;
-    }
-    return [...sectionStats].sort((a, b) => b.no - a.no)[0];
-  }, [sectionStats]);
-  const chartSections = useMemo(() => sectionStats.slice(0, 8), [sectionStats]);
-  const donutStyle = useMemo(() => {
-    if (!summary.total) {
-      return { background: "conic-gradient(#d7e3f6 0 100%)" };
-    }
-    const yesP = (summary.yes / summary.total) * 100;
-    const noP = (summary.no / summary.total) * 100;
-    const naP = Math.max(0, 100 - yesP - noP);
-    return {
-      background: `conic-gradient(
-        #2e9d5d 0 ${yesP}%,
-        #c8423d ${yesP}% ${yesP + noP}%,
-        #7a8598 ${yesP + noP}% ${yesP + noP + naP}%
-      )`
-    };
-  }, [summary]);
-
   const filteredRows = useMemo(() => {
     let result = [...rows];
-    const search = searchText.trim().toLowerCase();
-
-    if (search) {
-      result = result.filter(
-        (row) =>
-          row.item.toLowerCase().includes(search) ||
-          row.heading.toLowerCase().includes(search)
-      );
-    }
 
     result = result.filter((row) => statusFilter.includes(row.status));
     return result;
-  }, [rows, searchText, statusFilter]);
+  }, [rows, statusFilter]);
 
   const groupedRows = useMemo(() => {
     const groups = new Map();
@@ -202,7 +117,6 @@ function App() {
     setModalFirmName("");
     setShowAddFirmModal(false);
     setActiveSectionIndex(0);
-    setSearchText("");
     setStatusFilter([...STATUS_OPTIONS]);
   }
 
@@ -230,7 +144,6 @@ function App() {
     ]);
     setActiveFirmId(id);
     setActiveSectionIndex(0);
-    setSearchText("");
     setStatusFilter([...STATUS_OPTIONS]);
   }
 
@@ -250,7 +163,6 @@ function App() {
     setActiveFirmId(nextActiveId);
     setError("");
     setActiveSectionIndex(0);
-    setSearchText("");
     setStatusFilter([...STATUS_OPTIONS]);
   }
 
@@ -312,7 +224,6 @@ function App() {
   function selectFirm(id) {
     setActiveFirmId(id);
     setActiveSectionIndex(0);
-    setSearchText("");
     setStatusFilter([...STATUS_OPTIONS]);
   }
 
@@ -383,44 +294,12 @@ function App() {
     }
   }
 
-  function printDashboard() {
-    if (!rows.length) {
-      setError("Please upload checklist data before printing the dashboard.");
-      return;
-    }
-    setError("");
-    setActivePage("dashboard");
-    setTimeout(() => {
-      window.print();
-    }, 120);
-  }
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-block">
           <h1>GST Audit Checklist</h1>
           <p>Professional compliance review workspace</p>
-        </div>
-
-        <div className="panel">
-          <p className="label">Workspace Page</p>
-          <div className="view-switch">
-            <button
-              type="button"
-              className={activePage === "review" ? "view-btn active" : "view-btn"}
-              onClick={() => setActivePage("review")}
-            >
-              Form Filling
-            </button>
-            <button
-              type="button"
-              className={activePage === "dashboard" ? "view-btn active" : "view-btn"}
-              onClick={() => setActivePage("dashboard")}
-            >
-              Dashboard
-            </button>
-          </div>
         </div>
 
         <div className="panel">
@@ -463,14 +342,6 @@ function App() {
           disabled={!rows.length}
         >
           Download Updated Checklist
-        </button>
-        <button
-          type="button"
-          className="download-btn print-btn"
-          onClick={printDashboard}
-          disabled={!rows.length}
-        >
-          Print Dashboard
         </button>
       </aside>
 
@@ -531,9 +402,7 @@ function App() {
           <div>
             <p className="eyebrow">AO MITTAL & ASSOCIATES LLP</p>
             <h2>
-              {activePage === "review"
-                ? "GST Compliance Review Desk"
-                : "GST Audit Dashboard"}
+              GST Compliance Review Desk
             </h2>
             <p className="active-firm-text">Active firm: {activeFirm?.name || DEFAULT_FIRM_NAME}</p>
           </div>
@@ -547,103 +416,7 @@ function App() {
           </section>
         )}
 
-        {!!rows.length && activePage === "dashboard" && (
-          <>
-            <section className="metrics-grid">
-              <article className="metric-card">
-                <p>Total Items</p>
-                <h3>{summary.total}</h3>
-              </article>
-              <article className="metric-card">
-                <p>Yes</p>
-                <h3>{summary.yes}</h3>
-                <span>{formatPercent(summary.yes, summary.total)}</span>
-              </article>
-              <article className="metric-card">
-                <p>No</p>
-                <h3>{summary.no}</h3>
-                <span>{formatPercent(summary.no, summary.total)}</span>
-              </article>
-              <article className="metric-card">
-                <p>NA</p>
-                <h3>{summary.na}</h3>
-                <span>{formatPercent(summary.na, summary.total)}</span>
-              </article>
-            </section>
-
-            <section className="chart-grid">
-              <article className="chart-card">
-                <div className="chart-head">
-                  <h4>Status Distribution</h4>
-                  <span>{sectionStats.length} sections</span>
-                </div>
-                <div className="donut-wrap">
-                  <div className="donut-chart" style={donutStyle}>
-                    <div className="donut-hole">
-                      <strong>{formatPercent(summary.reviewed, summary.total)}</strong>
-                      <span>Reviewed</span>
-                    </div>
-                  </div>
-                  <div className="donut-legend">
-                    <p><i className="dot yes" />Yes: {summary.yes}</p>
-                    <p><i className="dot no" />No: {summary.no}</p>
-                    <p><i className="dot na" />NA: {summary.na}</p>
-                  </div>
-                </div>
-              </article>
-
-              <article className="chart-card">
-                <div className="chart-head">
-                  <h4>Risk Overview</h4>
-                  <span>{sectionsWithFindings} section(s) with findings</span>
-                </div>
-                <p className="dashboard-note">
-                  Highest finding concentration:{" "}
-                  <strong>
-                    {topFindingSection?.name || "N/A"}{" "}
-                    {topFindingSection ? `(${topFindingSection.no} no)` : ""}
-                  </strong>
-                </p>
-                <div className="progress-track large">
-                  <div
-                    className="progress-fill risk"
-                    style={{ width: formatPercent(summary.no, summary.total) }}
-                  />
-                </div>
-                <p className="dashboard-note">
-                  {formatPercent(summary.no, summary.total)} of checklist items are marked as No.
-                </p>
-              </article>
-            </section>
-
-            <section className="section-insights">
-              <div className="section-insights-head">
-                <h4>Section Completion Chart</h4>
-                <span>Top {chartSections.length} by size</span>
-              </div>
-              <div className="section-bars">
-                {chartSections.map((section) => (
-                  <div className="section-bar-row" key={section.name}>
-                    <div className="section-bar-title">
-                      <p>{section.name}</p>
-                      <span>
-                        {section.reviewed}/{section.total} reviewed | {section.no} no
-                      </span>
-                    </div>
-                    <div className="section-track">
-                      <div
-                        className="section-fill reviewed"
-                        style={{ width: formatPercent(section.reviewed, section.total) }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </>
-        )}
-
-        {!!rows.length && activePage === "review" && (
+        {!!rows.length && (
           <>
             {!!rows.length && !filteredRows.length && (
               <section className="empty-state">
